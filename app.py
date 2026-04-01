@@ -187,11 +187,16 @@ with tab1:
         showlegend=True,
     ))
 
-    # Train/test divider
-    fig.add_vline(
-        x=str(split_date.date()), line_dash="dash", line_color="red",
-        annotation_text="Train | Test", annotation_position="top right",
-    )
+    # Train/test divider — use Scatter instead of add_vline (Plotly date-axis compat)
+    price_min = float(df["price"].min())
+    price_max = float(df["price"].max())
+    fig.add_trace(go.Scatter(
+        x=[str(split_date.date()), str(split_date.date())],
+        y=[price_min, price_max],
+        mode="lines",
+        line=dict(color="red", dash="dash", width=1.5),
+        name="Train | Test split",
+    ))
 
     fig.update_layout(
         height=500, hovermode="x unified",
