@@ -362,15 +362,81 @@ with tab3:
     )
     st.plotly_chart(fig5, use_container_width=True)
 
-    # Summary table
-    st.subheader("Monthly Forecast Summary")
-    future_monthly = future_forecast.set_index("ds").resample("MS").agg(
-        {"yhat": "mean", "yhat_lower": "mean", "yhat_upper": "mean"}
-    ).reset_index()
-    future_monthly.columns = ["Month", "Avg Forecast ($)", "Lower CI ($)", "Upper CI ($)"]
-    future_monthly["Month"] = future_monthly["Month"].dt.strftime("%b %Y")
-    future_monthly = future_monthly.round(2)
-    st.dataframe(future_monthly, use_container_width=True, hide_index=True)
+    # ── Forecast Tables ───────────────────────────────────────────────────────
+    st.subheader("📅 1-Year Forecast Table")
+
+    view_mode = st.radio(
+        "View by:", ["Monthly Summary", "Weekly Summary", "Daily (all trading days)"],
+        horizontal=True,
+    )
+
+    tbl = future_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].copy()
+    tbl = tbl.rename(columns={
+        "ds":          "Date",
+        "yhat":        "Forecast ($)",
+        "yhat_lower":  "Lower CI ($)",
+        "yhat_upper":  "Upper CI ($)",
+    })
+    tbl["Date"] = pd.to_datetime(tbl["Date"])
+
+    # Computed change vs last known price
+    last_price = float(df["price"].iloc[-1])
+    tbl["Change vs Today ($)"] = (tbl["Forecast ($)"] - last_price).round(2)
+    tbl["Change vs Today (%)"] = ((tbl["Forecast ($)"] - last_price) / last_price * 100).round(2)
+
+    if view_mode == "Monthly Summary":
+        tbl_disp = tbl.set_index("Date").resample("MS").agg({
+            "Forecast ($)":       "mean",
+            "Lower CI ($)":       "mean",
+            "Upper CI ($)":       "mean",
+            "Change vs Today ($)":"last",
+            "Change vs Today (%)":"last",
+        }).reset_index()
+        tbl_disp["Date"] = tbl_disp["Date"].dt.strftime("%b %Y")
+
+    elif view_mode == "Weekly Summary":
+        tbl_disp = tbl.set_index("Date").resample("W-FRI").agg({
+            "Forecast ($)":       "mean",
+            "Lower CI ($)":       "min",
+            "Upper CI ($)":       "max",
+            "Change vs Today ($)":"last",
+            "Change vs Today (%)":"last",
+        }).reset_index()
+        tbl_disp["Date"] = tbl_disp["Date"].dt.strftime("%d %b %Y")
+
+    else:  # Daily
+        tbl_disp = tbl.copy()
+        tbl_disp["Date"] = tbl_disp["Date"].dt.strftime("%d %b %Y")
+
+    tbl_disp = tbl_disp.round(2)
+
+    # Colour-code the change column
+    def colour_change(val):
+        colour = "color: green" if val > 0 else ("color: red" if val < 0 else "")
+        return colour
+
+    styled = (
+        tbl_disp.style
+        .format({
+            "Forecast ($)":        "${:.2f}",
+            "Lower CI ($)":        "${:.2f}",
+            "Upper CI ($)":        "${:.2f}",
+            "Change vs Today ($)": "${:+.2f}",
+            "Change vs Today (%)": "{:+.2f}%",
+        })
+        .applymap(colour_change, subset=["Change vs Today ($)", "Change vs Today (%)"])
+    )
+
+    st.dataframe(styled, use_container_width=True, hide_index=True, height=500)
+
+    # Download button
+    csv_bytes = tbl_disp.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Download forecast as CSV",
+        data=csv_bytes,
+        file_name="aapl_1year_forecast.csv",
+        mime="text/csv",
+    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 4 — Prophet Components
