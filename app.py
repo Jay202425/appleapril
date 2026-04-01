@@ -179,8 +179,8 @@ with tab1:
         line=dict(color="green", width=2),
     ))
     fig.add_trace(go.Scatter(
-        x=pd.concat([future_forecast["ds"], future_forecast["ds"][::-1]]),
-        y=pd.concat([future_forecast["yhat_upper"], future_forecast["yhat_lower"][::-1]]),
+        x=np.concatenate([future_forecast["ds"].values, future_forecast["ds"].values[::-1]]),
+        y=np.concatenate([future_forecast["yhat_upper"].values, future_forecast["yhat_lower"].values[::-1]]),
         fill="toself", fillcolor="rgba(0,200,0,0.1)",
         line=dict(color="rgba(0,0,0,0)"),
         name="95% CI",
@@ -189,7 +189,7 @@ with tab1:
 
     # Train/test divider
     fig.add_vline(
-        x=split_date, line_dash="dash", line_color="red",
+        x=str(split_date.date()), line_dash="dash", line_color="red",
         annotation_text="Train | Test", annotation_position="top right",
     )
 
@@ -233,8 +233,8 @@ with tab2:
             name="Predicted (Test)", line=dict(color="red", dash="dash", width=2),
         ))
         fig3.add_trace(go.Scatter(
-            x=pd.concat([test_forecast["ds"], test_forecast["ds"][::-1]]),
-            y=pd.concat([test_forecast["yhat_upper"], test_forecast["yhat_lower"][::-1]]),
+            x=np.concatenate([test_forecast["ds"].values, test_forecast["ds"].values[::-1]]),
+            y=np.concatenate([test_forecast["yhat_upper"].values, test_forecast["yhat_lower"].values[::-1]]),
             fill="toself", fillcolor="rgba(255,0,0,0.1)",
             line=dict(color="rgba(0,0,0,0)"),
             name="95% CI", showlegend=True,
@@ -284,8 +284,8 @@ with tab3:
         name="Forecast", line=dict(color="green", width=2),
     ))
     fig5.add_trace(go.Scatter(
-        x=pd.concat([future_forecast["ds"], future_forecast["ds"][::-1]]),
-        y=pd.concat([future_forecast["yhat_upper"], future_forecast["yhat_lower"][::-1]]),
+        x=np.concatenate([future_forecast["ds"].values, future_forecast["ds"].values[::-1]]),
+        y=np.concatenate([future_forecast["yhat_upper"].values, future_forecast["yhat_lower"].values[::-1]]),
         fill="toself", fillcolor="rgba(0,200,0,0.15)",
         line=dict(color="rgba(0,0,0,0)"),
         name="95% CI",
