@@ -83,47 +83,61 @@ if run_button or "forecast_done" not in st.session_state:
 
     train_prophet = to_prophet(train_df, log_transform=True)
 
-    # ── Grid search over changepoint_prior_scale to minimise validation RMSE ──
+    # ── Cross-grid search: changepoint_prior × seasonality_prior ─────────────
     # Use last 20% of training data as an internal validation fold
     val_cutoff = int(len(train_prophet) * 0.80)
     tr_fold    = train_prophet.iloc[:val_cutoff]
     va_fold    = train_prophet.iloc[val_cutoff:]
 
-    cp_candidates = [0.001, 0.01, 0.05, 0.1, 0.3, 0.5]
-    best_cp, best_val_rmse, best_model = changepoint_prior, float("inf"), None
+    cp_candidates  = [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.5]
+    sp_candidates  = [0.01, 0.1, 1.0, 5.0, 10.0]
+    best_cp, best_sp, best_val_rmse = 0.05, 10.0, float("inf")
 
+    total_trials = len(cp_candidates) * len(sp_candidates)
     status = st.empty()
+    trial  = 0
     for cp in cp_candidates:
-        status.info(f"Grid search: testing changepoint_prior_scale = {cp} …")
-        m = Prophet(
-            changepoint_prior_scale=cp,
-            seasonality_prior_scale=seasonality_prior,
-            seasonality_mode="multiplicative",
-            yearly_seasonality=yearly_seasonality,
-            weekly_seasonality=weekly_seasonality,
-            daily_seasonality=False,
-            n_changepoints=50,
-        )
-        m.add_country_holidays(country_name="US")
-        m.fit(tr_fold)
-        preds = m.predict(va_fold[["ds"]])
-        val_rmse_i = rmse(np.exp(va_fold["y"].values), np.exp(preds["yhat"].values))
-        if val_rmse_i < best_val_rmse:
-            best_val_rmse = val_rmse_i
-            best_cp       = cp
+        for sp in sp_candidates:
+            trial += 1
+            status.info(f"Grid search {trial}/{total_trials}: cp={cp}, sp={sp} …")
+            m = Prophet(
+                changepoint_prior_scale=cp,
+                seasonality_prior_scale=sp,
+                seasonality_mode="multiplicative",
+                yearly_seasonality=False,
+                weekly_seasonality=weekly_seasonality,
+                daily_seasonality=False,
+                n_changepoints=80,
+                changepoint_range=0.95,
+            )
+            m.add_seasonality(name="yearly",    period=365.25, fourier_order=15)
+            m.add_seasonality(name="quarterly", period=91.3125, fourier_order=8)
+            m.add_seasonality(name="monthly",   period=30.4375, fourier_order=5)
+            m.add_country_holidays(country_name="US")
+            m.fit(tr_fold)
+            preds = m.predict(va_fold[["ds"]])
+            val_rmse_i = rmse(np.exp(va_fold["y"].values), np.exp(preds["yhat"].values))
+            if val_rmse_i < best_val_rmse:
+                best_val_rmse = val_rmse_i
+                best_cp       = cp
+                best_sp       = sp
     status.empty()
 
     # ── Re-train best model on full training set ──────────────────────────────
-    with st.spinner(f"Training best model (changepoint_prior_scale={best_cp}) on full train set…"):
+    with st.spinner(f"Training best model (cp={best_cp}, sp={best_sp}) on full train set…"):
         model = Prophet(
             changepoint_prior_scale=best_cp,
-            seasonality_prior_scale=seasonality_prior,
+            seasonality_prior_scale=best_sp,
             seasonality_mode="multiplicative",
-            yearly_seasonality=yearly_seasonality,
+            yearly_seasonality=False,
             weekly_seasonality=weekly_seasonality,
             daily_seasonality=False,
-            n_changepoints=50,
+            n_changepoints=80,
+            changepoint_range=0.95,
         )
+        model.add_seasonality(name="yearly",    period=365.25, fourier_order=15)
+        model.add_seasonality(name="quarterly", period=91.3125, fourier_order=8)
+        model.add_seasonality(name="monthly",   period=30.4375, fourier_order=5)
         model.add_country_holidays(country_name="US")
         model.fit(train_prophet)
 
@@ -161,6 +175,7 @@ if run_button or "forecast_done" not in st.session_state:
         "future_forecast": future_forecast,
         "test_rmse":       test_rmse,
         "best_cp":         best_cp,
+        "best_sp":         best_sp,
         "forecast_done":   True,
     })
 
@@ -174,14 +189,16 @@ full_forecast   = st.session_state["full_forecast"]
 future_forecast = st.session_state["future_forecast"]
 test_rmse       = st.session_state["test_rmse"]
 best_cp         = st.session_state.get("best_cp", "-")
+best_sp         = st.session_state.get("best_sp", "-")
 
 # ── KPI row ───────────────────────────────────────────────────────────────────
-k1, k2, k3, k4, k5 = st.columns(5)
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 k1.metric("Data Points",   f"{len(df):,}")
 k2.metric("Training Days", f"{len(train_df):,}")
 k3.metric("Test Days",     f"{len(test_df):,}")
 k4.metric("Test RMSE",     f"${test_rmse:.2f}")
 k5.metric("Best CP Scale", str(best_cp))
+k6.metric("Best SP Scale", str(best_sp))
 
 st.markdown("---")
 
