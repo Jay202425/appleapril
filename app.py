@@ -73,31 +73,69 @@ if run_button or "forecast_done" not in st.session_state:
     train_df   = df[df.index <= split_date].copy()
     test_df    = df[df.index >  split_date].copy()
 
-    # ── Prophet dataframe format ──────────────────────────────────────────────
-    def to_prophet(dataframe):
+    # ── Prophet dataframe format (log-transform y to handle multiplicative growth)
+    def to_prophet(dataframe, log_transform=True):
         p = dataframe.reset_index().rename(columns={"Date": "ds", "price": "y"})
         p["ds"] = pd.to_datetime(p["ds"]).dt.tz_localize(None)
+        if log_transform:
+            p["y"] = np.log(p["y"])
         return p[["ds", "y"]]
 
-    train_prophet = to_prophet(train_df)
+    train_prophet = to_prophet(train_df, log_transform=True)
 
-    # ── Fit model ─────────────────────────────────────────────────────────────
-    with st.spinner("Training Prophet model…"):
-        model = Prophet(
-            changepoint_prior_scale=changepoint_prior,
+    # ── Grid search over changepoint_prior_scale to minimise validation RMSE ──
+    # Use last 20% of training data as an internal validation fold
+    val_cutoff = int(len(train_prophet) * 0.80)
+    tr_fold    = train_prophet.iloc[:val_cutoff]
+    va_fold    = train_prophet.iloc[val_cutoff:]
+
+    cp_candidates = [0.001, 0.01, 0.05, 0.1, 0.3, 0.5]
+    best_cp, best_val_rmse, best_model = changepoint_prior, float("inf"), None
+
+    status = st.empty()
+    for cp in cp_candidates:
+        status.info(f"Grid search: testing changepoint_prior_scale = {cp} …")
+        m = Prophet(
+            changepoint_prior_scale=cp,
             seasonality_prior_scale=seasonality_prior,
+            seasonality_mode="multiplicative",
             yearly_seasonality=yearly_seasonality,
             weekly_seasonality=weekly_seasonality,
             daily_seasonality=False,
+            n_changepoints=50,
         )
+        m.add_country_holidays(country_name="US")
+        m.fit(tr_fold)
+        preds = m.predict(va_fold[["ds"]])
+        val_rmse_i = rmse(np.exp(va_fold["y"].values), np.exp(preds["yhat"].values))
+        if val_rmse_i < best_val_rmse:
+            best_val_rmse = val_rmse_i
+            best_cp       = cp
+    status.empty()
+
+    # ── Re-train best model on full training set ──────────────────────────────
+    with st.spinner(f"Training best model (changepoint_prior_scale={best_cp}) on full train set…"):
+        model = Prophet(
+            changepoint_prior_scale=best_cp,
+            seasonality_prior_scale=seasonality_prior,
+            seasonality_mode="multiplicative",
+            yearly_seasonality=yearly_seasonality,
+            weekly_seasonality=weekly_seasonality,
+            daily_seasonality=False,
+            n_changepoints=50,
+        )
+        model.add_country_holidays(country_name="US")
         model.fit(train_prophet)
 
-    # ── Predict on test period ────────────────────────────────────────────────
-    test_future  = to_prophet(test_df)[["ds"]]
+    # ── Predict on test period (exponentiate back from log-space) ─────────────
+    test_future   = to_prophet(test_df, log_transform=False)[["ds"]]
     test_forecast = model.predict(test_future)
+    # Convert log-space predictions back to price space
+    for col in ["yhat", "yhat_lower", "yhat_upper"]:
+        test_forecast[col] = np.exp(test_forecast[col])
 
-    y_true = test_df["price"].values
-    y_pred = test_forecast["yhat"].values
+    y_true    = test_df["price"].values
+    y_pred    = test_forecast["yhat"].values
     test_rmse = rmse(y_true, y_pred)
 
     # ── Forecast next 1 year ──────────────────────────────────────────────────
@@ -105,6 +143,9 @@ if run_button or "forecast_done" not in st.session_state:
     last_date     = df.index[-1]
     future_df     = model.make_future_dataframe(periods=future_days, freq="B")  # Business days
     full_forecast = model.predict(future_df)
+    # Exponentiate all prediction columns back to price space
+    for col in ["yhat", "yhat_lower", "yhat_upper"]:
+        full_forecast[col] = np.exp(full_forecast[col])
 
     # Separate future from history
     future_forecast = full_forecast[full_forecast["ds"] > pd.Timestamp(last_date.date())]
@@ -119,6 +160,7 @@ if run_button or "forecast_done" not in st.session_state:
         "full_forecast":   full_forecast,
         "future_forecast": future_forecast,
         "test_rmse":       test_rmse,
+        "best_cp":         best_cp,
         "forecast_done":   True,
     })
 
@@ -131,13 +173,15 @@ test_forecast   = st.session_state["test_forecast"]
 full_forecast   = st.session_state["full_forecast"]
 future_forecast = st.session_state["future_forecast"]
 test_rmse       = st.session_state["test_rmse"]
+best_cp         = st.session_state.get("best_cp", "-")
 
 # ── KPI row ───────────────────────────────────────────────────────────────────
-k1, k2, k3, k4 = st.columns(4)
+k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Data Points",   f"{len(df):,}")
 k2.metric("Training Days", f"{len(train_df):,}")
 k3.metric("Test Days",     f"{len(test_df):,}")
 k4.metric("Test RMSE",     f"${test_rmse:.2f}")
+k5.metric("Best CP Scale", str(best_cp))
 
 st.markdown("---")
 
